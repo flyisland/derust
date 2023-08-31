@@ -5,7 +5,8 @@ use env_logger::Env;
 use log::{debug, info, warn};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
 /// Find duplicate files.
 #[derive(Parser)]
 struct Cli {
@@ -26,12 +27,16 @@ fn main() {
     let mut abs_paths: Vec<PathBuf> = args
         .paths
         .iter()
-        .map(|path| std::path::absolute(path).unwrap())
+        .map(|path| path.canonicalize().unwrap())
         .collect();
     abs_paths.sort_by(|a, b| a.as_os_str().len().cmp(&b.as_os_str().len()));
     debug!("abs_paths: {:?}", abs_paths);
     let paths = de_start_with(&abs_paths);
     debug!("paths: {:?}", paths);
+    let files = get_files_in_folder_recursive(&paths);
+    for f in files {
+        println!("{:?}", f);
+    }
 }
 
 // Find duplicate paths
@@ -52,30 +57,73 @@ fn de_start_with(paths: &Vec<std::path::PathBuf>) -> Vec<PathBuf> {
     result
 }
 
-fn try_exists(paths: &Vec<std::path::PathBuf>) {
-    paths.iter().for_each(|path| {
-        let meta = fs::metadata(path).unwrap();
-        println!("dev:{}, ino:{}, {}", meta.dev(), meta.ino(), path.display(),);
-    })
+#[derive(Debug)]
+struct SymbolicFile {
+    path: PathBuf,
+    target: PathBuf,
 }
 
-fn get_files_in_folder_recursive(folder_path: &Path) -> Vec<PathBuf> {
-    let mut file_paths: Vec<PathBuf> = vec![];
+#[derive(Debug)]
+struct RegularFile {
+    path: PathBuf,
+    size: u64,
+    dev: u64,
+    ino: u64,
+    hard_links: Vec<PathBuf>,
+    symbolic_links: Vec<PathBuf>,
+}
 
-    if let Ok(entries) = fs::read_dir(folder_path) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
+fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
+    let mut files: Vec<RegularFile> = vec![];
+    let mut symbolic_files: Vec<SymbolicFile> = vec![];
+    let mut folders: Vec<PathBuf> = paths.clone();
 
-                if path.is_file() {
-                    file_paths.push(path);
-                } else if path.is_dir() {
-                    let subfolder_files = get_files_in_folder_recursive(&path);
-                    file_paths.extend(subfolder_files);
+    while let Some(path) = folders.pop() {
+        if path.is_dir() {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        folders.push(entry.path());
+                    }
                 }
+            }
+        } else if path.is_symlink() {
+            match path.canonicalize() {
+                Ok(target) => symbolic_files.push(SymbolicFile {
+                    path: path.clone(),
+                    target,
+                }),
+                Err(err) => {
+                    warn!(
+                        "Failed to canonicalize symlink: {:?}->{:?}, error: {:?}",
+                        path,
+                        path.read_link().unwrap(),
+                        err
+                    );
+                }
+            }
+        } else {
+            let metadata = path.metadata().unwrap();
+            files.push(RegularFile {
+                path,
+                size: metadata.size(),
+                dev: metadata.dev(),
+                ino: metadata.ino(),
+                hard_links: vec![],
+                symbolic_links: vec![],
+            });
+        }
+    }
+
+    print!("symbolic_files: {:?}", symbolic_files);
+
+    for f in &mut files {
+        for s in &symbolic_files {
+            if f.path == s.target {
+                f.symbolic_links.push(s.path.clone());
             }
         }
     }
 
-    file_paths
+    files
 }
