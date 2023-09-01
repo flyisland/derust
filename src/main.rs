@@ -34,6 +34,12 @@ fn main() {
     let paths = de_start_with(&abs_paths);
     debug!("paths: {:?}", paths);
     let files = get_files_in_folder_recursive(&paths);
+    let files_account = files.len();
+    info!("Found {} files", files_account);
+    let files: Vec<&RegularFile> = files.iter().filter(|f| f.size > 0).collect();
+    let zero_size_files = files_account - files.len();
+    info!("Skipped {} files with zero size", zero_size_files);
+
     for f in files {
         println!("{:?}", f);
     }
@@ -114,8 +120,6 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
             });
         }
     }
-
-    print!("symbolic_files: {:?}", symbolic_files);
 
     for f in &mut files {
         for s in &symbolic_files {

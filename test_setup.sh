@@ -13,3 +13,5 @@ ln file1.txt hardlink1.txt
 ln copy1.txt hardlink_copy1.txt
 ln file2.txt dir01/hardlink2.txt
 ln -s file3.txt softlink3.txt
+touch z1.txt
+touch z2.txt
