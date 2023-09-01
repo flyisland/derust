@@ -37,8 +37,12 @@ fn main() {
     let files_account = files.len();
     info!("Found {} files", files_account);
     let files: Vec<&RegularFile> = files.iter().filter(|f| f.size > 0).collect();
-    let zero_size_files = files_account - files.len();
-    info!("Skipped {} files with zero size", zero_size_files);
+    if (files_account - files.len()) > 0 {
+        info!(
+            "Skipped {} files with zero size",
+            files_account - files.len()
+        );
+    }
 
     for f in files {
         println!("{:?}", f);
@@ -85,15 +89,7 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
     let mut folders: Vec<PathBuf> = paths.clone();
 
     while let Some(path) = folders.pop() {
-        if path.is_dir() {
-            if let Ok(entries) = fs::read_dir(path) {
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        folders.push(entry.path());
-                    }
-                }
-            }
-        } else if path.is_symlink() {
+        if path.is_symlink() {
             match path.canonicalize() {
                 Ok(target) => symbolic_files.push(SymbolicFile {
                     path: path.clone(),
@@ -106,6 +102,14 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
                         path.read_link().unwrap(),
                         err
                     );
+                }
+            }
+        } else if path.is_dir() {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        folders.push(entry.path());
+                    }
                 }
             }
         } else {
@@ -122,10 +126,26 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
     }
 
     for f in &mut files {
+        symbolic_files = symbolic_files
+            .into_iter()
+            .filter(|s| {
+                if f.path == s.target {
+                    f.symbolic_links.push(s.path.clone());
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+    }
+
+    if symbolic_files.len() > 0 {
+        warn!(
+            "Skipped {} symbolic links not pointing to files in scope",
+            symbolic_files.len()
+        );
         for s in &symbolic_files {
-            if f.path == s.target {
-                f.symbolic_links.push(s.path.clone());
-            }
+            debug!("Symbolic link: {:?}->{:?}", s.path, s.target);
         }
     }
 
