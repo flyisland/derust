@@ -55,7 +55,14 @@ fn main() {
 fn de_start_with(paths: &Vec<PathBuf>) -> Vec<PathBuf> {
     let mut abs_paths: Vec<PathBuf> = paths
         .iter()
-        .map(|path| path.canonicalize().unwrap())
+        .map(|path| match path.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                warn!("Failed to canonicalize path: {:?}, error: {:?}", path, err);
+                PathBuf::new()
+            }
+        })
+        .filter(|path| path.as_os_str().is_empty() == false)
         .collect();
     abs_paths.sort_by(|a, b| a.as_os_str().len().cmp(&b.as_os_str().len()));
     debug!("abs_paths: {:?}", abs_paths);
