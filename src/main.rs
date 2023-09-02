@@ -1,7 +1,6 @@
 use clap::Parser;
 use env_logger::Env;
 use log::{debug, info, warn};
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
@@ -41,34 +40,30 @@ fn main() {
     let args = Cli::parse();
     info!("Now scanning {:?} ...", args.paths);
 
-    let mut abs_paths: Vec<PathBuf> = args
-        .paths
-        .iter()
-        .map(|path| path.canonicalize().unwrap())
-        .collect();
-    abs_paths.sort_by(|a, b| a.as_os_str().len().cmp(&b.as_os_str().len()));
-    debug!("abs_paths: {:?}", abs_paths);
-    let paths = de_start_with(&abs_paths);
-    debug!("paths: {:?}", paths);
-    let files = get_files_in_folder_recursive(&paths);
-    let files_account = files.len();
-    info!("Found {} files", files_account);
-    let mut files: Vec<RegularFile> = files.into_iter().filter(|f| f.size > 0).collect();
-    info!(
-        "Skipped {} files with zero size",
-        files_account - files.len()
-    );
-    let same_size_files = by_size(&mut files);
-    let same_size_files = by_digest(same_size_files);
-    for files in same_size_files {
+    let abs_paths = de_start_with(&args.paths);
+    debug!("paths: {:?}", abs_paths);
+    let files = get_files_in_folder_recursive(&abs_paths);
+    info!("Found {} files", files.len());
+    let files = skip_zero_size(files);
+    let files = group_hard_links(files);
+    let same_size_files = by_size(files);
+    let same_digest_files = by_digest(same_size_files);
+    for files in same_digest_files {
         debug!("Same size files: {:#?}", files);
     }
 }
 
 // Find duplicate paths
-fn de_start_with(paths: &Vec<std::path::PathBuf>) -> Vec<PathBuf> {
+fn de_start_with(paths: &Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut abs_paths: Vec<PathBuf> = paths
+        .iter()
+        .map(|path| path.canonicalize().unwrap())
+        .collect();
+    abs_paths.sort_by(|a, b| a.as_os_str().len().cmp(&b.as_os_str().len()));
+    debug!("abs_paths: {:?}", abs_paths);
+
     let mut result: Vec<PathBuf> = vec![];
-    for path in paths {
+    for path in abs_paths {
         if let Some(start_with) = result.iter().find(|prefix| path.starts_with(prefix)) {
             warn!(
                 "Skip path: \"{}\" starts with \"{}\"",
@@ -152,8 +147,39 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
     files
 }
 
-fn by_size(files: &mut Vec<RegularFile>) -> Vec<Vec<RegularFile>> {
-    let files = group_hard_links(files);
+fn skip_zero_size(files: Vec<RegularFile>) -> Vec<RegularFile> {
+    let before_length = files.len();
+    let result: Vec<RegularFile> = files.into_iter().filter(|f| f.size > 0).collect();
+    info!(
+        "Skipped {} files with zero size",
+        before_length - result.len()
+    );
+    result
+}
+
+fn group_hard_links(files: Vec<RegularFile>) -> Vec<RegularFile> {
+    let before_length = files.len();
+    let mut result: Vec<RegularFile> = vec![];
+
+    let mut groups: HashMap<(u64, u64), RegularFile> = HashMap::new();
+    for f in files {
+        let path = f.path.clone();
+        groups
+            .entry((f.dev, f.ino))
+            .or_insert(f)
+            .hard_links
+            .push(path);
+    }
+
+    for (_, f) in groups {
+        result.push(f);
+    }
+    info!("Found {} hard link files", before_length - result.len());
+
+    result
+}
+
+fn by_size(files: Vec<RegularFile>) -> Vec<Vec<RegularFile>> {
     let before_length = files.len();
 
     let mut result: Vec<Vec<RegularFile>> = vec![];
@@ -173,32 +199,6 @@ fn by_size(files: &mut Vec<RegularFile>) -> Vec<Vec<RegularFile>> {
         "Skipped {} files with unique size",
         before_length - after_length
     );
-    result
-}
-
-fn group_hard_links(files: &mut Vec<RegularFile>) -> Vec<RegularFile> {
-    let before_length = files.len();
-    let mut result: Vec<RegularFile> = vec![];
-    files.sort_by(|a, b| {
-        if let Ordering::Equal = a.dev.cmp(&b.dev) {
-            a.ino.cmp(&b.ino)
-        } else {
-            a.dev.cmp(&b.dev)
-        }
-    });
-
-    let mut last_f = files.pop().unwrap();
-    while let Some(f) = files.pop() {
-        if f.dev == last_f.dev && f.ino == last_f.ino {
-            last_f.hard_links.push(f.path.clone());
-        } else {
-            result.push(last_f);
-            last_f = f;
-        }
-    }
-    result.push(last_f);
-    info!("Found {} hard link files", before_length - result.len());
-
     result
 }
 
