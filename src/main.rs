@@ -1,5 +1,3 @@
-#![feature(absolute_path)]
-
 use clap::Parser;
 use env_logger::Env;
 use log::{debug, info, warn};
@@ -60,20 +58,8 @@ fn main() {
         "Skipped {} files with zero size",
         files_account - files.len()
     );
-    let files_account = files.len();
-    let same_size_files = files_with_same_size(&mut files);
-    let same_size_files_account = same_size_files.iter().fold(0, |acc, f| acc + f.len());
-    info!(
-        "Skipped {} files with unique size",
-        files_account - same_size_files_account
-    );
-    let files_account = same_size_files_account;
+    let same_size_files = by_size(&mut files);
     let same_size_files = by_digest(same_size_files);
-    let same_size_files_account = same_size_files.iter().fold(0, |acc, f| acc + f.len());
-    info!(
-        "Skipped {} files with unique digest",
-        files_account - same_size_files_account
-    );
     for files in same_size_files {
         debug!("Same size files: {:#?}", files);
     }
@@ -166,32 +152,34 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
     files
 }
 
-fn files_with_same_size(files: &mut Vec<RegularFile>) -> Vec<Vec<RegularFile>> {
-    let mut files = group_hard_links(files);
-    files.sort_by(|a, b| a.size.cmp(&b.size));
+fn by_size(files: &mut Vec<RegularFile>) -> Vec<Vec<RegularFile>> {
+    let files = group_hard_links(files);
+    let before_length = files.len();
+
     let mut result: Vec<Vec<RegularFile>> = vec![];
-    let mut last_size = 0;
-    let mut same_size_files: Vec<RegularFile> = vec![];
-    while let Some(f) = files.pop() {
-        if f.size == last_size {
-            same_size_files.push(f);
-        } else {
-            last_size = f.size;
-            if same_size_files.len() >= 2 {
-                result.push(same_size_files)
-            }
-            same_size_files = vec![f];
-        }
+    let mut groups: HashMap<u64, Vec<RegularFile>> = HashMap::new();
+    for f in files {
+        groups.entry(f.size).or_insert(vec![]).push(f);
     }
-    if same_size_files.len() >= 2 {
-        result.push(same_size_files)
-    }
+    groups
+        .into_iter()
+        .filter(|(_, v)| v.len() >= 2)
+        .for_each(|(_, v)| {
+            result.push(v);
+        });
+    let after_length = result.iter().fold(0, |acc, f| acc + f.len());
+
+    info!(
+        "Skipped {} files with unique size",
+        before_length - after_length
+    );
     result
 }
 
-fn group_hard_links(same_size_files: &mut Vec<RegularFile>) -> Vec<RegularFile> {
+fn group_hard_links(files: &mut Vec<RegularFile>) -> Vec<RegularFile> {
+    let before_length = files.len();
     let mut result: Vec<RegularFile> = vec![];
-    same_size_files.sort_by(|a, b| {
+    files.sort_by(|a, b| {
         if let Ordering::Equal = a.dev.cmp(&b.dev) {
             a.ino.cmp(&b.ino)
         } else {
@@ -199,8 +187,8 @@ fn group_hard_links(same_size_files: &mut Vec<RegularFile>) -> Vec<RegularFile> 
         }
     });
 
-    let mut last_f = same_size_files.pop().unwrap();
-    while let Some(f) = same_size_files.pop() {
+    let mut last_f = files.pop().unwrap();
+    while let Some(f) = files.pop() {
         if f.dev == last_f.dev && f.ino == last_f.ino {
             last_f.hard_links.push(f.path.clone());
         } else {
@@ -209,6 +197,7 @@ fn group_hard_links(same_size_files: &mut Vec<RegularFile>) -> Vec<RegularFile> 
         }
     }
     result.push(last_f);
+    info!("Found {} hard link files", before_length - result.len());
 
     result
 }
@@ -223,6 +212,7 @@ fn get_md5(path: &PathBuf) -> Vec<u8> {
 }
 
 fn by_digest(files: Vec<Vec<RegularFile>>) -> Vec<Vec<RegularFile>> {
+    let before_length = files.iter().fold(0, |acc, f| acc + f.len());
     let mut result: Vec<Vec<RegularFile>> = vec![];
 
     for same_size_files in files {
@@ -235,8 +225,13 @@ fn by_digest(files: Vec<Vec<RegularFile>>) -> Vec<Vec<RegularFile>> {
             .filter(|(_, v)| v.len() >= 2)
             .for_each(|(_, v)| {
                 result.push(v);
-            })
+            });
     }
+    let after_length = result.iter().fold(0, |acc, f| acc + f.len());
+    info!(
+        "Skipped {} files with unique digest",
+        before_length - after_length
+    );
 
     result
 }
