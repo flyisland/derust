@@ -41,9 +41,7 @@ fn main() {
     info!("Now scanning {:?} ...", args.paths);
 
     let abs_paths = de_start_with(&args.paths);
-    debug!("paths: {:?}", abs_paths);
     let files = get_files_in_folder_recursive(&abs_paths);
-    info!("Found {} files", files.len());
     let files = skip_zero_size(files);
     let files = group_hard_links(files);
     let same_size_files = by_size(files);
@@ -74,6 +72,7 @@ fn de_start_with(paths: &Vec<PathBuf>) -> Vec<PathBuf> {
             result.push(path.clone());
         }
     }
+    debug!("paths: {:?}", result);
 
     result
 }
@@ -144,6 +143,7 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
         }
     }
 
+    info!("Found {} files", files.len());
     files
 }
 
