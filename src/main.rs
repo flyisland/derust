@@ -16,12 +16,6 @@ struct Cli {
 }
 
 #[derive(Debug)]
-struct SymbolicFile {
-    path: PathBuf,
-    target: PathBuf,
-}
-
-#[derive(Debug)]
 struct RegularFile {
     path: PathBuf,
     size: u64,
@@ -86,16 +80,13 @@ fn de_start_with(paths: &Vec<PathBuf>) -> Vec<PathBuf> {
 
 fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
     let mut files: Vec<RegularFile> = vec![];
-    let mut symbolic_files: Vec<SymbolicFile> = vec![];
+    let mut symbolic_files: Vec<(PathBuf, PathBuf)> = vec![];
     let mut folders: Vec<PathBuf> = paths.clone();
 
     while let Some(path) = folders.pop() {
         if path.is_symlink() {
             match path.canonicalize() {
-                Ok(target) => symbolic_files.push(SymbolicFile {
-                    path: path.clone(),
-                    target,
-                }),
+                Ok(target) => symbolic_files.push((path.clone(), target)),
                 Err(err) => {
                     warn!(
                         "Failed to canonicalize symlink: {:?}->{:?}, error: {:?}",
@@ -129,9 +120,9 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
     for f in &mut files {
         symbolic_files = symbolic_files
             .into_iter()
-            .filter(|s| {
-                if f.path == s.target {
-                    f.symbolic_links.push(s.path.clone());
+            .filter(|(path, target)| {
+                if f.path == *target {
+                    f.symbolic_links.push(path.clone());
                     false
                 } else {
                     true
@@ -145,8 +136,8 @@ fn get_files_in_folder_recursive(paths: &Vec<PathBuf>) -> Vec<RegularFile> {
             "Skipped {} symbolic links not pointing to files in scope",
             symbolic_files.len()
         );
-        for s in &symbolic_files {
-            debug!("Symbolic link: {:?}->{:?}", s.path, s.target);
+        for (path, target) in &symbolic_files {
+            debug!("Symbolic link: {:?}->{:?}", path, target);
         }
     }
 
